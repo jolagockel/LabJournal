@@ -1,0 +1,289 @@
+---
+title: "LaLab 4: Networks as causes - Spatial regression analysis"
+author: "Jola Gockel"
+date: "2026-05-01"
+output: html_document
+---
+
+```{r, globalsettings, echo=FALSE, warning=FALSE, results='hide'}
+library(knitr)
+
+knitr::opts_chunk$set(echo = TRUE)
+opts_chunk$set(tidy.opts=list(width.cutoff=100),tidy=TRUE, warning = FALSE, message = FALSE,comment = "#>", cache=TRUE, class.source=c("test"), class.output=c("test2"))
+options(width = 100)
+rgl::setupKnitr()
+
+colorize <- function(x, color) {sprintf("<span style='color: %s;'>%s</span>", color, x) }
+```
+
+```{r klippy, echo=FALSE, include=TRUE}
+klippy::klippy(position = c('top', 'right'))
+#klippy::klippy(color = 'darkred')
+#klippy::klippy(tooltip_message = 'Click to copy', tooltip_success = 'Done')
+```
+
+```{r setup, include=FALSE}
+library(spdep) #for the spatial weight matrix and for the Moran's I test
+library(spatialreg) #for the spatial lag and spatial error models
+library(haven)
+library(tidyverse)
+library(igraph)
+library(lme4)
+```
+
+Last compiled on `r format(Sys.time(), '%B, %Y')`
+
+<br>
+
+# Constructing a Spatial Weight Matrix
+
+```{r}
+data(columbus)
+mydata <- columbus
+attach(mydata)
+
+neighbors <- col.gal.nb #an adjacency list of neighbours
+class(neighbors) #is already a nb object so we can skip additional steps
+#transforming nb object to a listw object
+listw <- nb2listw(neighbors, style = "W") #W indicates row-standardization
+summary(listw)
+```
+
+
+# Linear Regression Analysis
+
+```{r}
+summary(CRIME)
+summary(INC)
+summary(HOVAL)
+
+plot(neighbors, coords)
+
+olsreg <- lm(CRIME ~ INC + HOVAL)
+summary(olsreg)
+```
+Higher household income and higher housing values lead to a significantly lower crime rate.BUT the model does not take the spatial dependence into account and our hypothesis tests may lead to erroneous conclusions.
+
+
+# Spatial Analysis
+
+## Moran’s I test
+
+```{r}
+#to figure out if we even need a spatial model
+moran.test(CRIME, listw)
+```
+The p-value is very small so we reject the null hypothesis of no spatial dependence.
+
+
+## Lagrange multiplier tests for spatial lag and spatial error dependencies
+
+```{r}
+#to figure out which type of spatial models we should use
+lm.LMtests(olsreg, listw, test=c("LMlag", "LMerr"))
+```
+Both hypotheses are rejected, so we need theory to decide whether to use a spatial lag or spatial error model (or test them all and see if results differ).
+
+## Spatial lag model (spatial autoregressive model)
+
+```{r}
+slm <- lagsarlm(CRIME ~ INC + HOVAL, data = mydata, listw, Durbin = "FALSE")
+summary(slm)
+#coefficients are very similar to the LRM coefficients
+#the spatial parameter rho is positive and significant showing spatial dependence
+
+#direct and indirect effects
+im<-impacts(slm, listw = listw, zstats=TRUE, R=200) #zstats=T to obtain p-values
+sums<-summary(im,  zstats=T)
+data.frame(sums$res)
+data.frame(sums$pzmat)
+#both total effects are significant but mainly driven by direct effects
+```
+
+
+## Spatial error model
+
+```{r}
+sem <- errorsarlm(CRIME ~ INC + HOVAL, data = mydata, listw, Durbin = FALSE)
+summary(sem)
+#again a significantly negative effect of household income and housing values on the crime rate
+#the spatial parameter lambda is positive and significant showing dependence
+```
+
+
+## Spatial autoregressive combined model
+
+```{r}
+sac <- sacsarlm(CRIME ~ INC + HOVAL, data = mydata, listw, Durbin = FALSE)
+summary(sac)
+#similar results, but rho (and lambda?) is now not significant
+```
+
+
+## Spatial Durbin model
+
+```{r}
+sdm <- lagsarlm(CRIME ~ INC + HOVAL, data = mydata, listw, Durbin = TRUE)
+summary(sdm)
+#the results are similar and the lags are not significant
+```
+
+
+## Spatial Durbin error model
+
+```{r}
+sdem <- errorsarlm(CRIME ~ INC + HOVAL, data = mydata, listw, Durbin = TRUE)
+summary(sdem)
+#results are again similar, but now the lag of household income is significant
+```
+
+
+## General nested model
+
+```{r}
+gnm <- sacsarlm(CRIME ~ INC + HOVAL, data = mydata, listw, Durbin = TRUE)
+summary(gnm)
+#similar results again
+#so choose model based on theory
+```
+
+
+# Assignment
+
+## Data + Data Cleaning
+
+```{r}
+PupilsWaveV <- read_dta(file = "PupilsWaveV.dta")
+
+PupilsWaveV$acthomew <- 5-PupilsWaveV$acthomew
+PupilsWaveV$sex <- PupilsWaveV$sex-1
+PupilsWaveV$sex <- 1-PupilsWaveV$sex
+```
+
+
+## Linear Regression Model
+
+```{r}
+olsreg <- lm(acthomew ~ sex + age, data=PupilsWaveV)
+summary(olsreg)
+```
+
+
+## Multilevel Linear Model
+
+```{r}
+ml <- lmer(acthomew ~ sex + age + (1|schoolnr), PupilsWaveV)
+summary(ml)
+```
+
+
+## Friends Adjacency Matrix
+
+```{r}
+class12b <- PupilsWaveV %>%
+  filter(schoolnr=="12b")
+
+#fetching the spatial weight matrix (adjacency list format)
+friendsadjlist <- class12b %>%
+  select(namenr, friend1:friend12)
+class(friendsadjlist)
+
+#transform into edge list
+friendsedgelist <- class12b %>%
+  select(namenr, friend1:friend12) %>%
+  pivot_longer(c(friend1:friend12)) %>%
+  filter(!is.na(value)) %>%
+  rename(from="namenr", to="value", sourcevar="name") %>%
+  relocate(to, .after=from)
+
+friendsnodelist <- class12b %>%
+  select(namenr, sex, age, acthomew) %>%
+  rename(name="namenr")
+
+#transform into igraph object
+friendsgraph <- graph_from_data_frame(friendsedgelist, vertices=friendsnodelist)
+class(friendsgraph)
+
+#plot
+plot(friendsgraph)
+
+layout <- layout_with_kk(friendsgraph)
+plot(friendsgraph, layout=layout, edge.arrow.size=.5)
+
+#transform to adjacency matrix
+friendsadjmatrix <- as_adjacency_matrix(friendsgraph, sparse=F)
+class(friendsadjmatrix)
+friendsadjmatrix
+```
+
+
+## Row-standardized Spatial Weight Matrix
+
+```{r}
+friends <- mat2listw(friendsadjmatrix, row.names=NULL, zero.policy=T, style="W")
+class(friends)
+```
+
+
+## Moran’s I Test + Lagrange Multiplier Tests
+
+```{r}
+moran.test(class12b$acthomew, friends, zero.policy=T) #=T bc we have isolates
+
+olsregnew <- lm(acthomew ~ sex + age, data=friendsnodelist)
+summary(olsregnew)
+
+lm.LMtests(olsregnew, friends, test=c("LMlag", "LMerr"), zero.policy=T)
+```
+Reject null hypothesis for LMlag but not for LMerr --> use spatial lag model
+
+## Spatial Lag Model + Impacts
+
+```{r}
+slm <- lagsarlm(acthomew ~ sex + age, data=friendsnodelist, friends, zero.policy=T, Durbin=F)
+summary(slm)
+
+#impacts
+im<-impacts(slm, listw=friends, zstats=T, R=200)
+sums<-summary(im,  zstats=T)
+data.frame(sums$res)
+data.frame(sums$pzmat)
+sums$direct
+sums$indirect
+sums$total
+```
+Ignoring significance because of low sample size. Girls tend to do more homework than boys. The older you are, the more homework you do. Negative rho: if your friends do homework, you are less likely to do it.
+Impacts: Direct effects tend to be larger than indirect effects and have the reversed sign.
+ADD MORE INTERPRETATION
+
+## Spatial Error Model + Spatial Autoregressive Combined Model
+
+```{r}
+sem <- errorsarlm(acthomew ~ sex + age, data=friendsnodelist, friends, zero.policy=T, Durbin=F)
+summary(sem)
+
+sac <- sacsarlm(acthomew ~ sex + age, data=friendsnodelist, friends, zero.policy=T, Durbin=F)
+summary(sac)
+#add impacts
+```
+SEM: Can just interpret point estimates. Lambda is negative so unobserved factors of the friends are reducing your homework.
+SAC: Same interpretation as above.
+
+## Spatial Durin Model + Spatial Durbin Error Model + General Nested Model
+
+```{r}
+sdm <- lagsarlm(acthomew ~ sex + age, data=friendsnodelist, friends, zero.policy=T, Durbin=T)
+summary(sdm)
+#add impacts
+
+sdem <- errorsarlm(acthomew ~ sex + age, data=friendsnodelist, friends, zero.policy=T, Durbin=T)
+summary(sdem)
+
+gnm <- sacsarlm(acthomew ~ sex + age, data=friendsnodelist, friends, zero.policy=T, Durbin=T)
+summary(gnm)
+#add impacts
+```
+ADD INTERPRETATION
+
+## Conclusion
+Think*

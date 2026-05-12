@@ -1,0 +1,138 @@
+---
+title: "Lab 3: Introducing the Knecht data"
+author: "Jola Gockel"
+date: "2026-04-30"
+output: html_document
+---
+
+```{r, globalsettings, echo=FALSE, warning=FALSE, results='hide'}
+library(knitr)
+
+knitr::opts_chunk$set(echo = TRUE)
+opts_chunk$set(tidy.opts=list(width.cutoff=100),tidy=TRUE, warning = FALSE, message = FALSE,comment = "#>", cache=TRUE, class.source=c("test"), class.output=c("test2"))
+options(width = 100)
+rgl::setupKnitr()
+
+colorize <- function(x, color) {sprintf("<span style='color: %s;'>%s</span>", color, x) }
+```
+
+```{r klippy, echo=FALSE, include=TRUE}
+klippy::klippy(position = c('top', 'right'))
+#klippy::klippy(color = 'darkred')
+#klippy::klippy(tooltip_message = 'Click to copy', tooltip_success = 'Done')
+```
+
+```{r setup, include=FALSE}
+library(igraph)
+library(haven) # to read Stata files
+library(reshape2)
+library(tidyverse)
+```
+
+Last compiled on `r format(Sys.time(), '%B, %Y')`
+
+<br>
+
+# A first look at the data
+
+
+```{r}
+PupilsWaveV <- read_dta(file = "PupilsWaveV.dta")
+
+#keep only one class
+class12b <- PupilsWaveV %>% 
+  filter(schoolnr == "12b")
+```
+
+
+# Assignment
+
+## Importing the data
+
+```{r}
+elist <- class12b %>% 
+  select(namenr, friend1:friend12) %>%
+  pivot_longer(c(friend1:friend12)) %>% 
+  filter(!is.na(value)) %>%
+  rename(from ="namenr", to = "value", sourcevar= "name") %>%
+  relocate(to, .after=from)
+
+nodelist <- class12b %>% 
+  select(namenr, sex, age) %>% 
+  rename(name = "namenr")
+
+classnet <- graph_from_data_frame(elist, vertices = nodelist)
+```
+
+
+## Directed or undirected?
+
+```{r}
+is_directed(classnet)
+```
+
+
+## Basic visualization
+
+```{r}
+plot(classnet)
+
+#diff layout algorithm
+layout <- layout_with_kk(classnet)
+plot(classnet, layout = layout, edge.arrow.size = .5)
+```
+
+
+## Five number summary
+
+```{r}
+#size
+vcount(classnet)
+ecount(classnet)
+#density
+edge_density(classnet)
+#components
+count_components(classnet)
+#diameter
+diameter(classnet)
+#average distance
+mean_distance(classnet)
+#clustering coefficient
+transitivity(classnet, type="average")
+```
+
+
+## Hypothesis: girls have higher degree than boys in this network
+
+```{r}
+V(classnet)$degree <- igraph::degree(classnet)
+d <- igraph::as_data_frame(classnet, what = "vertices")
+
+t.test(degree ~ sex, alternative = "less", 
+       conf.level = .95, 
+       var.equal = TRUE, 
+       data = d)
+```
+
+
+## Refined visualization
+
+```{r}
+plot(classnet, 
+     vertex.size = V(classnet)$degree +10, 
+     vertex.color= V(classnet)$sex, 
+     edge.arrow.size = .5,
+     layout=layout_with_kk(classnet),
+     margin = -.1
+     )
+
+#own colours + dropping vertex labels
+plot(classnet, 
+     vertex.size = V(classnet)$degree + 5, 
+     vertex.color= ifelse(V(classnet)$sex == 2, "royalblue", "red3"), 
+     edge.arrow.size = .5,
+     layout=layout_with_kk(classnet),
+     vertex.label = NA,
+     margin = -.1
+     )
+```

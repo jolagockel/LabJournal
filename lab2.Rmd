@@ -1,0 +1,131 @@
+---
+title: "Lab 2: Basic network analysis in R"
+author: "Jola Gockel"
+date: "2026-04-30"
+output: html_document
+---
+
+```{r, globalsettings, echo=FALSE, warning=FALSE, results='hide'}
+library(knitr)
+
+knitr::opts_chunk$set(echo = TRUE)
+opts_chunk$set(tidy.opts=list(width.cutoff=100),tidy=TRUE, warning = FALSE, message = FALSE,comment = "#>", cache=TRUE, class.source=c("test"), class.output=c("test2"))
+options(width = 100)
+rgl::setupKnitr()
+
+colorize <- function(x, color) {sprintf("<span style='color: %s;'>%s</span>", color, x) }
+```
+
+```{r klippy, echo=FALSE, include=TRUE}
+klippy::klippy(position = c('top', 'right'))
+#klippy::klippy(color = 'darkred')
+#klippy::klippy(tooltip_message = 'Click to copy', tooltip_success = 'Done')
+```
+
+```{r setup, include=FALSE}
+library(igraph)
+
+z <- make_graph("Zachary")
+z
+plot(z)
+is_directed(z)
+```
+
+Last compiled on `r format(Sys.time(), '%B, %Y')`
+
+<br>
+
+# Network level: a “five number summary”
+
+
+## Size
+
+```{r}
+vcount(z) #number of vertices
+ecount(z) #number of edges
+```
+
+
+## Density
+
+```{r}
+#the ratio of existing edges and the maximum possible number of edges that could exist
+edge_density(z)
+#can also add such network-level results to the network object
+z$density <- edge_density(z)
+z #g/n indicates graph-level attribute
+```
+
+
+## Components
+
+```{r}
+#the number of unconnected parts of the network
+count_components(z)
+```
+
+
+## Diameter (and distances)
+
+```{r}
+#the “longest shortest path” in the network
+diameter(z)
+
+#related: average shortest path length, i.e. the average of all the shortest path over all pairs of vertices in the network
+mean_distance(z)
+```
+
+
+## Clustering Coefficient
+
+```{r}
+#many ways to quantify clustering / transitivity tendency, diff for (un)directed
+#clustering coefficient: computes, for each vertex, the proportion of the
+#potential ties between the vertex’ neighbors that actually exist (in the ego
+#networks literature, this is referred to as local density), and averages this
+#over all vertices
+transitivity(z, type="average")
+```
+
+
+# Individual level: centrality
+
+
+## Degree centrality
+
+```{r}
+#the number of connections per node
+degree(z)
+degree(z, v = 3)
+summary(degree(z))
+hist(degree(z))
+
+V(z)$degree <- degree(z)
+
+#We add  + 8 to degree to avoid that the lowest-degree nodes become really small and specify margin = -0.1 to reduce the whitespace around the plot
+plot(z, vertex.size = V(z)$degree+8, margin= -0.1)
+```
+
+
+## Betweenness centrality
+
+```{r}
+#assesses to what extent nodes sit on shortest paths between other nodes
+betweenness(z)
+
+z <- z %>% 
+  set_vertex_attr(
+    name = "betweenness",
+    value = betweenness(z)
+  )
+```
+
+
+## Closeness centrality
+
+```{r}
+#assesses how close each node is to the other nodes
+closeness(z)
+V(z)$closeness <- closeness(z)
+```
+

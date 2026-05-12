@@ -1,0 +1,79 @@
+---
+title: 'Lab 5: Exponential Random Graphs Modeling'
+author: "Jola Gockel"
+date: "2026-05-01"
+output: html_document
+---
+
+```{r, globalsettings, echo=FALSE, warning=FALSE, results='hide'}
+library(knitr)
+
+knitr::opts_chunk$set(echo = TRUE)
+opts_chunk$set(tidy.opts=list(width.cutoff=100),tidy=TRUE, warning = FALSE, message = FALSE,comment = "#>", cache=TRUE, class.source=c("test"), class.output=c("test2"))
+options(width = 100)
+rgl::setupKnitr()
+
+colorize <- function(x, color) {sprintf("<span style='color: %s;'>%s</span>", color, x) }
+```
+
+```{r klippy, echo=FALSE, include=TRUE}
+klippy::klippy(position = c('top', 'right'))
+#klippy::klippy(color = 'darkred')
+#klippy::klippy(tooltip_message = 'Click to copy', tooltip_success = 'Done')
+```
+
+```{r setup, include=FALSE}
+library(network)
+library(intergraph)
+library(sna)
+library(igraph)
+library(ergm)
+library(tidyverse) 
+library(haven)
+```
+
+Last compiled on `r format(Sys.time(), '%B, %Y')`
+
+<br>
+
+# Data preparation
+
+```{r}
+load(url("https://github.com/rensec/sasr08/raw/main/classnet.rdata"))
+summary(classnet)
+
+#we need an object from the network package but that cannot handle factors
+#converting sex from factor to numeric
+V(classnet)$sex <-as.numeric(V(classnet)$sex)
+g <- asNetwork(classnet)
+g
+
+gplot(g,  vertex.col=g %v% "sex"*2)
+#indicates gender homophily and a lot of reciprocity
+```
+
+
+# Model estimation
+
+```{r}
+#hypothesis: ties are likely to be reciprocated
+M1.g<-ergm(g ~ edges +  mutual )
+summary(M1.g)
+#mutual coeff shows  positive and significant effect for the number of reciprocated ties
+
+#adding homophily effect (nodematch) and a gender differential effect (nodefactor)
+M2.g<-ergm(g ~ edges + mutual +  nodefactor("sex", levels = 2) + nodematch("sex" ))
+summary(M2.g)
+#positive effect of gender homophily but neither boys or girls tend to have more ties than the other
+```
+
+
+# Goodness of fit
+
+```{r}
+M2.g.gof <- gof(M2.g)
+M2.g.gof
+#the model statistics look ok but the network statistics seem to be a bit off
+#can investigate them in plot
+plot(M2.g.gof)
+```

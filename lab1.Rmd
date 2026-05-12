@@ -1,10 +1,8 @@
 ---
-title: "Journal 1"
+title: "Lab 1: Handling social network data in R"
 #bibliography: references.bib
-author: "Your Name"
+author: "Jola Gockel"
 ---
-
-
 
 ```{r, globalsettings, echo=FALSE, warning=FALSE, results='hide'}
 library(knitr)
@@ -14,16 +12,20 @@ opts_chunk$set(tidy.opts=list(width.cutoff=100),tidy=TRUE, warning = FALSE, mess
 options(width = 100)
 rgl::setupKnitr()
 
-
-
 colorize <- function(x, color) {sprintf("<span style='color: %s;'>%s</span>", color, x) }
-
 ```
 
 ```{r klippy, echo=FALSE, include=TRUE}
 klippy::klippy(position = c('top', 'right'))
 #klippy::klippy(color = 'darkred')
 #klippy::klippy(tooltip_message = 'Click to copy', tooltip_success = 'Done')
+```
+
+```{r setup, include=FALSE}
+library(network)
+library(igraph)
+library(reshape2)
+library(tidyverse)
 ```
 
 Last compiled on `r format(Sys.time(), '%B, %Y')`
@@ -37,10 +39,199 @@ This is just an example page of your `r colorize("lab journal", "red")`.
 
 ----
 
+# Getting network data into R: the igraph package
+
+## From adjacency matrix to igraph object
 
 ```{r}
-print("Hello Lab Journal")
+url1 <- "https://github.com/rensec/sasr08/raw/main/g_adj_matrix_simple.csv"
+g_matrix <- read.csv(file = url1, header = FALSE)
+g_matrix
+
+class(g_matrix) #R automatically loads the adjacency matrix as a data frame
+
+#turn data frame into matrix object
+g_matrix <- as.matrix(g_matrix)
+g_matrix
+
+#adding row and column names for clarity
+rownames(g_matrix) <- 1:nrow(g_matrix)
+colnames(g_matrix) <- 1:ncol(g_matrix)
+g_matrix
+
+#importing file with attributes
+g_nodes_age <- read.csv(file = "https://github.com/rensec/sasr08/raw/main/g_nodes_age.csv")
+g_nodes_age
+
+#turn matrix into igraph network object
+g <- graph_from_adjacency_matrix(g_matrix)
+class(g)
+g
+plot(g)
+
+#add node attributes to the network object
+g <- set_vertex_attr(g, 
+                     name = "age",
+                     value = g_nodes_age$age)
+
 ```
 
 
+## From edge list to igraph object
 
+```{r}
+g_elist <- read.csv(file = "https://github.com/rensec/sasr08/raw/main/g_elist.csv")
+g_elist
+
+#creating igraph network object from edge list
+g_from_elist <- graph_from_data_frame(g_elist) 
+plot(g_from_elist) #shows: we lost the isolates
+
+#to include isolates: also feed a list of all nodes
+g_from_elist <- graph_from_data_frame(g_elist, vertices = g_nodes_age) 
+plot(g_from_elist)
+```
+
+```{r}
+#assignment: pipeline
+g_elist %>%
+  graph_from_data_frame(vertices = g_nodes_age) %>%
+  plot()
+```
+
+
+## From adjacency list to igraph object
+
+```{r}
+g_adj_list <- read.csv(file = "https://github.com/rensec/sasr08/raw/main/g_adj_list.csv")
+g_adj_list
+
+#no way to immediately import adjacency lists to igraph network object
+#instead: first transform adjacency list into edge list, then into igraph
+#transform the data into long format for this
+g_elist_from_alist <- g_adj_list
+g_elist_from_alist <-  select(g_elist_from_alist, id, friend1:friend2) # keep only the network variables (and id)
+g_elist_from_alist <-  melt(g_elist_from_alist, id.vars = "id") # from the reshape2 package
+g_elist_from_alist
+
+#same but as pipeline
+g_elist_from_alist <- g_adj_list %>% 
+  select(id, friend1:friend2) %>% #keep only the network variables (and id)
+  melt( id.vars = "id") #from the reshape2 package
+
+#same but using tidyverse
+g_adj_list %>% # (we don't save it into an object as above this time, since we just want to show that the result is the same)
+  select(id, friend1:friend2) %>% #keep only the network variables (and id)
+  pivot_longer(c(friend1, friend2))
+
+#to create edge list: drop all missing values on “value” and do some housekeeping
+g_elist_from_alist <- g_elist_from_alist %>% 
+  filter(!is.na(value)) %>% # drop the missings
+  rename(from ="id", to = "value", sourcevar= "variable") %>% #just nice for interpretation
+  relocate(to, .after=from) #move around the columns
+g_elist_from_alist
+
+#now import into igraph network object BUT we loose isolates
+g_from_alist <- graph_from_data_frame(g_elist_from_alist) #this is a proper igraph graph object
+plot(g_from_alist)
+
+#instead: also feed the node list created from the adjacency list data frame
+nodelist <- select(g_adj_list,id,age)
+g_from_alist <- graph_from_data_frame(g_elist_from_alist, vertices = nodelist) #this is a proper igraph graph object
+plot(g_from_alist)
+
+```
+
+```{r}
+#assignment: pipeline
+#g_adj_list TO BE ADDED
+```
+
+
+# The reverse direction: exporting from igraph objects
+
+## From igraph to adjacency matrix
+
+```{r}
+g_adj_matrix <- as_adjacency_matrix(g, sparse = FALSE) #sparse=F to keep the zeros
+g_adj_matrix
+
+#check that this matrix matches the original file
+all(g_adj_matrix == g_matrix)
+```
+
+
+## From igraph to edge list
+
+```{r}
+g_edgelist <- igraph::as_data_frame(g_from_elist, what = "edges") #:: to not use the dplyr/tidyverse function
+g_edgelist 
+
+#add nodes list to not loose isolates
+igraph::as_data_frame(g_from_elist, what = "vertices") 
+```
+
+
+## From igraph to adjacency list
+
+```{r}
+edgelist_2 <- igraph::as_data_frame(g_from_alist, what = "edges")
+nodelist_2 <- igraph::as_data_frame(g_from_alist, what = "vertices")
+
+d <- edgelist_2 %>%
+  rename(id = "from") %>% 
+  pivot_wider( id_cols = id, names_from = sourcevar, values_from = to ) %>% 
+  merge(nodelist_2, by.x = "id", by.y = "name", all.y = TRUE ) %>% 
+  relocate(age, .after = id) %>% 
+  type_convert() #as_data_frame returns characters; this transforms it back to numeric
+d
+```
+
+
+# Getting network data into R: the network package
+
+```{r}
+#using the edge list we've created before
+g_np <- as.network(g_elist_from_alist, matrix.type = "edgelist", vertices = nodelist)
+g_np
+
+plot(g_np)
+```
+
+
+# Modifying networks in igraph
+
+```{r}
+#can make changes to data once it's in a network object
+
+#e.g. removing a node
+g_mod <- delete_vertices(g,2)
+plot(g_mod)
+
+#e.g. removing all nodes with age=21
+g_mod <- delete_vertices(g,which(V(g)$age == 21))
+plot(g_mod)
+
+#e.g. removing all nodes with missing age
+g_mod <- delete_vertices(g,which(is.na(V(g)$age)))
+plot(g_mod)
+
+#using V() as an alternative to set_vertex_attr()
+V(g)$gender <- c("male", "female", "female", "other", "male") 
+g
+
+#using E() to access, add and modify edge attributes
+#??? no code
+
+#functions that modify the entire graph
+#e.g. reversing the direction of all edges
+g_rev <- reverse_edges(g)
+plot(g_rev)
+
+#combining edges of two graphs
+g_union <- igraph::union(g, g_rev)
+
+#removing directions
+g_undir <- as_undirected(g)
+plot(g_undir)
+```
